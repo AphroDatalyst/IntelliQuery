@@ -1,30 +1,83 @@
-# IntelliQuery - Local RAG (Ollama)
-Local **RAG system** over PDFs with conversation memory, hybrid search, re-ranking and citation-grounded answers.
+# IntelliQuery
 
-* Pipeline: PDF ingestion → chunking → embedding (Ollama) → Chroma vector store → retrieval → rerank → LLM generation → strict fallback
+[![CI](https://github.com/AphroDatalyst/IntelliQuery/actions/workflows/ci.yml/badge.svg)](https://github.com/AphroDatalyst/IntelliQuery/actions/workflows/ci.yml)
 
-## Features
+Ask questions about your documents and get answers you can check. IntelliQuery is a
+multimodal retrieval-augmented generation (RAG) service: it reads text, tables and
+figures from uploaded files, answers only from what it retrieved, and attaches every
+claim to the page region that supports it. When the documents do not contain the
+answer, it says so.
 
-* PDF ingestion with chunking
-* Dense + hybrid retrieval (BM25 + embeddings)
-* Multi-turn memory
-* Query normalization & expansion
-* Sentence-level citations
-* Retrieval confidence & grounding validation
-* Streamlit chat UI with persistent history
+## Status
 
-**Metrics:** Precision@k, Recall@k, MRR, Answer Relevance & Groundedness
+The project is being rebuilt from a local Streamlit prototype into a production
+service. This table is kept current with what is actually in the repository.
 
-## Quick Start
+| Area | State |
+|---|---|
+| Service foundation: API skeleton, config, structured logging, health probes | Done |
+| PostgreSQL + pgvector schema, migrations, CI, container image | Done |
+| Multimodal ingestion (layout-aware parsing, tables, figure descriptions) | Planned |
+| Hybrid retrieval, reranking, cited and verified generation | Planned |
+| Chat API and web UI with citation viewer | Planned |
+| Evaluation gates and tracing | Planned |
+| Cloud deployment (Terraform) | Planned |
+
+## Design
+
+- **One database.** PostgreSQL holds documents, chunks, dense vectors (pgvector, HNSW)
+  and the full-text index, so hybrid search is a single SQL query and deleting a
+  document removes everything derived from it in one transaction.
+- **Citations are data, not decoration.** A citation is a row linking an answer to a
+  chunk, a page and a bounding box, with a support score from a verification pass.
+- **Figures and tables are first-class chunks.** Each carries its cropped image and a
+  generated description, and is retrieved alongside text.
+- **Models are pluggable.** The pipeline talks to a provider interface; hosted and
+  local models are a configuration choice.
+
+See [docs/architecture.md](docs/architecture.md) for the data model and request flow.
+
+## Quick start
+
+Requires Docker.
 
 ```bash
-pip install -r requirements.txt
-ollama pull hf.co/CompendiumLabs/bge-base-en-v1.5-gguf
-ollama pull hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF
-streamlit run app.py
+cp .env.example .env
+docker compose up --build -d
+curl http://localhost:8000/readyz
 ```
-* Upload PDFs → Build Index → Ask Questions
 
+This starts PostgreSQL with pgvector, applies migrations, and serves the API on
+port 8000. Interactive API docs are at `http://localhost:8000/docs`.
 
-## Next branch (planned)
-* multi-modal-rag → add image/PDF-table ingestion
+## Development
+
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+
+```bash
+uv sync                          # install
+docker compose up -d postgres    # database only
+uv run alembic upgrade head      # apply migrations
+uv run uvicorn intelliquery.api.app:create_app --factory --reload
+```
+
+| Task | Command |
+|---|---|
+| Lint and type-check | `make lint` |
+| Unit tests | `uv run pytest` |
+| Unit + integration tests | set `INTELLIQUERY_DATABASE_URL`, then `uv run pytest` |
+| New migration | `make revision m="describe change"` |
+
+Configuration is read from environment variables prefixed `INTELLIQUERY_`;
+[.env.example](.env.example) lists them.
+
+## Continuous integration
+
+Every push and pull request runs formatting, lint and strict type checks; applies the
+migrations to a real PostgreSQL + pgvector, verifies that models and migrations agree
+and that migrations reverse cleanly; runs the test suite; and builds the container
+image. Pushes to `main` and version tags publish the image to GitHub Container Registry.
+
+## License
+
+[Apache 2.0](LICENSE)
