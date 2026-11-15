@@ -1,0 +1,48 @@
+name: intelliquery
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-intelliquery}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-intelliquery}
+      POSTGRES_DB: ${POSTGRES_DB:-intelliquery}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    # Built once here; the api service reuses the same image.
+    build:
+      context: .
+      dockerfile: deploy/docker/api.Dockerfile
+    image: intelliquery-api:local
+    command: ["alembic", "upgrade", "head"]
+    environment: &api-env
+      INTELLIQUERY_ENVIRONMENT: ${INTELLIQUERY_ENVIRONMENT:-local}
+      INTELLIQUERY_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-intelliquery}:${POSTGRES_PASSWORD:-intelliquery}@postgres:5432/${POSTGRES_DB:-intelliquery}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: intelliquery-api:local
+    pull_policy: never
+    environment: *api-env
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

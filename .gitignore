@@ -1,7 +1,38 @@
-# Environments
-.venv
+# Python
 __pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
 
-# Custom
-chroma_db
-docs
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local data: uploaded documents, indexes, telemetry, eval output
+data/
+reports/
+chroma_db/
+*.sqlite3
+
+# Pre-rewrite prototype kept locally for reference while porting
+legacy/
+
+# Node / frontend
+node_modules/
+.next/
+
+# Editors and OS
+.idea/
+.vscode/
+.claude/
+.DS_Store
+Thumbs.db
