@@ -7,16 +7,62 @@ flowchart LR
     UI[Web UI] --> API[FastAPI service]
     API --> PG[(PostgreSQL + pgvector)]
     API --> OBJ[(Object storage)]
-    API --> Q[[Job queue]]
-    Q --> W[Ingestion worker]
+    PG -. job queue .-> W[Ingestion worker]
     W --> PG
     W --> OBJ
     API --> M[Model providers]
     W --> M
 ```
 
-Implemented today: the API service and the PostgreSQL schema. The other components
-are listed in the README status table and arrive in later milestones.
+Implemented today: the API service, the PostgreSQL schema and the ingestion worker.
+The other components are listed in the README status table and arrive in later
+milestones.
+
+## Ingestion
+
+```mermaid
+flowchart LR
+    U[Upload] --> V{Valid PDF?<br/>Seen before?}
+    V -->|new| S[Store source<br/>queue job]
+    S --> P[Parse layout]
+    P --> C[Chunk by structure]
+    C --> F[Describe figures]
+    F --> E[Embed]
+    E --> T[(One transaction:<br/>pages + chunks)]
+```
+
+1. **Accept.** A file is checked by content (not extension), size-limited, and hashed.
+   The same bytes uploaded to the same collection return the existing document.
+2. **Parse.** A layout model recovers reading order, headings, tables and figures, with
+   the page and bounding box of every block. Tables are kept as Markdown; tables and
+   figures also keep a cropped image. Each page is rendered for the citation viewer.
+3. **Chunk.** Text is grouped under its heading and never merged across a section
+   boundary; oversized blocks split at sentence boundaries. Every table and figure is a
+   chunk of its own. Each chunk records the heading path above it and the page regions
+   it covers.
+4. **Describe figures.** A vision model transcribes what is visible in each figure and
+   is told not to infer beyond it. Decorative images are dropped. Without a vision
+   model, a figure is indexed by its printed caption only.
+5. **Embed.** The heading path is prepended to the content before embedding, so a
+   passage is retrieved in the context of its section. The endpoint's vector size is
+   verified against the index.
+6. **Store.** Pages and chunks are written in one transaction that replaces any earlier
+   result, so re-running ingestion is idempotent and readers never see a half-indexed
+   document.
+
+### Job queue
+
+Jobs live in the `ingestion_jobs` table. Workers claim them with
+`SELECT ... FOR UPDATE SKIP LOCKED`, so any number of workers can run without a
+separate broker and without taking the same job twice. A failed job is retried up to a
+limit; a job left running by a worker that died is reclaimed after a timeout.
+
+### Model providers
+
+The pipeline depends on two small interfaces, `Embedder` and `FigureDescriber`. The
+bundled implementation speaks the OpenAI-compatible HTTP API, which covers hosted
+providers and local servers alike, with bounded retries and backoff on transient
+failures.
 
 ## Data model
 

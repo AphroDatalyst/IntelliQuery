@@ -17,7 +17,7 @@ service. This table is kept current with what is actually in the repository.
 |---|---|
 | Service foundation: API skeleton, config, structured logging, health probes | Done |
 | PostgreSQL + pgvector schema, migrations, CI, container image | Done |
-| Multimodal ingestion (layout-aware parsing, tables, figure descriptions) | Planned |
+| Multimodal ingestion: layout-aware parsing, tables, figure descriptions, job queue, worker | Done |
 | Hybrid retrieval, reranking, cited and verified generation | Planned |
 | Chat API and web UI with citation viewer | Planned |
 | Evaluation gates and tracing | Planned |
@@ -47,8 +47,26 @@ docker compose up --build -d
 curl http://localhost:8000/readyz
 ```
 
-This starts PostgreSQL with pgvector, applies migrations, and serves the API on
-port 8000. Interactive API docs are at `http://localhost:8000/docs`.
+This starts PostgreSQL with pgvector, applies migrations, serves the API on port 8000
+and runs an ingestion worker. Interactive API docs are at `http://localhost:8000/docs`.
+
+### Ingest documents
+
+Ingestion needs an embedding model that returns 1024-dimensional vectors, served over
+any OpenAI-compatible endpoint. With [Ollama](https://ollama.com) on the same machine:
+
+```bash
+ollama pull bge-m3
+uv sync --extra ingest
+uv run alembic upgrade head
+uv run intelliquery ingest path/to/manual.pdf --collection manuals
+uv run intelliquery worker --drain
+uv run intelliquery status
+```
+
+To have figures described so they can be retrieved by what they show, set
+`INTELLIQUERY_VISION_MODEL` to a vision-capable model. Hosted providers work the same
+way: point the `*_BASE_URL` settings at them and set the API keys.
 
 ## Development
 

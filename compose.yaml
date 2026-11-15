@@ -44,5 +44,32 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  worker:
+    build:
+      context: .
+      dockerfile: deploy/docker/worker.Dockerfile
+    image: intelliquery-worker:local
+    # Model endpoints and keys come from .env; see .env.example.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *api-env
+      INTELLIQUERY_STORAGE_DIR: /var/lib/intelliquery/storage
+      # Reach a model server running on the host (for example Ollama) by default.
+      INTELLIQUERY_EMBEDDING_BASE_URL: ${INTELLIQUERY_EMBEDDING_BASE_URL:-http://host.docker.internal:11434/v1}
+      INTELLIQUERY_VISION_BASE_URL: ${INTELLIQUERY_VISION_BASE_URL:-http://host.docker.internal:11434/v1}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - storage-data:/var/lib/intelliquery/storage
+      - model-cache:/var/lib/intelliquery/models
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
 volumes:
   postgres-data:
+  storage-data:
+  model-cache:
