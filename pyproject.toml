@@ -10,6 +10,7 @@ dependencies = [
     "alembic>=1.14",
     "asyncpg>=0.30",
     "fastapi>=0.115",
+    "httpx>=0.27",
     "pgvector>=0.3.6",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
@@ -17,15 +18,37 @@ dependencies = [
     "uvicorn[standard]>=0.32",
 ]
 
+[project.optional-dependencies]
+# Document parsing pulls in PyTorch; only the ingestion worker needs it.
+ingest = [
+    "docling>=2.15",
+    "pillow>=10.4",
+    "torch>=2.4",
+    "torchvision>=0.19",
+]
+
+[project.scripts]
+intelliquery = "intelliquery.cli:main"
+
 [dependency-groups]
 dev = [
-    "httpx>=0.27",
     "mypy>=1.13",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pytest-cov>=6.0",
     "ruff>=0.8",
 ]
+
+# On Linux, install CPU-only PyTorch wheels: the default wheels bundle several
+# gigabytes of CUDA libraries that a CPU worker image never uses.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]
@@ -55,6 +78,13 @@ files = ["src", "tests"]
 [[tool.mypy.overrides]]
 module = ["pgvector.*"]
 ignore_missing_imports = true
+
+# Optional heavy dependencies: treated as untyped so results do not depend on
+# whether the `ingest` extra is installed.
+[[tool.mypy.overrides]]
+module = ["docling.*", "docling_core.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
