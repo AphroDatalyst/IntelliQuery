@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 
 from intelliquery.ingestion.service import UploadRejected, validate_upload
@@ -25,7 +27,20 @@ async def test_storage_overwrites_existing_objects(storage: LocalStorage) -> Non
     assert await storage.get("k") == b"new"
 
 
-@pytest.mark.parametrize("key", ["../escape", "a/../../escape", "/etc/passwd", "C:/Windows/x"])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "../escape",
+        "a/../../escape",
+        "/etc/passwd",
+        # A drive letter is an absolute path only on Windows; elsewhere it is an
+        # ordinary relative name that stays inside the root.
+        pytest.param(
+            "C:/Windows/x",
+            marks=pytest.mark.skipif(sys.platform != "win32", reason="Windows drive path"),
+        ),
+    ],
+)
 async def test_storage_rejects_keys_outside_the_root(storage: LocalStorage, key: str) -> None:
     with pytest.raises(ValueError, match="escapes"):
         await storage.put(key, b"x")
