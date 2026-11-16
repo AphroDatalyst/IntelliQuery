@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 
 from intelliquery.config import EMBEDDING_DIMENSIONS
-from intelliquery.providers import ProviderError
+from intelliquery.providers import ChatMessage, ChatResult, ProviderError
 
 logger = logging.getLogger(__name__)
 
@@ -163,3 +163,77 @@ class OpenAICompatFigureDescriber:
         if not text or text.upper().startswith(DECORATIVE):
             return None
         return str(text)
+
+
+def _png_part(image: bytes) -> dict[str, Any]:
+    data_uri = "data:image/png;base64," + base64.b64encode(image).decode("ascii")
+    return {"type": "image_url", "image_url": {"url": data_uri}}
+
+
+class OpenAICompatChat:
+    def __init__(self, client: OpenAICompatClient, model: str) -> None:
+        self._client = client
+        self.model = model
+
+    async def complete(
+        self, messages: Sequence[ChatMessage], *, max_tokens: int, json_output: bool = False
+    ) -> ChatResult:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            # Answers must be reproducible and stay close to the sources.
+            "temperature": 0,
+            "max_tokens": max_tokens,
+            "messages": [
+                {
+                    "role": message.role,
+                    "content": [
+                        {"type": "text", "text": message.content},
+                        *(_png_part(image) for image in message.images),
+                    ]
+                    if message.images
+                    else message.content,
+                }
+                for message in messages
+            ],
+        }
+        if json_output:
+            payload["response_format"] = {"type": "json_object"}
+        body = await self._client.post("chat/completions", payload)
+        try:
+            text = body["choices"][0]["message"]["content"] or ""
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ProviderError(f"malformed chat response: {exc!r}") from exc
+        usage = body.get("usage") or {}
+        return ChatResult(
+            text=str(text).strip(),
+            input_tokens=usage.get("prompt_tokens"),
+            output_tokens=usage.get("completion_tokens"),
+        )
+
+
+class HttpReranker:
+    """Cross-encoder reranker behind a Cohere/Jina-style `POST /rerank` endpoint."""
+
+    def __init__(self, client: OpenAICompatClient, model: str) -> None:
+        self._client = client
+        self.model = model
+
+    async def rerank(self, query: str, documents: Sequence[str]) -> list[float]:
+        if not documents:
+            return []
+        body = await self._client.post(
+            "rerank",
+            {
+                "model": self.model,
+                "query": query,
+                "documents": list(documents),
+                "top_n": len(documents),
+            },
+        )
+        scores = [0.0] * len(documents)
+        try:
+            for row in body["results"]:
+                scores[int(row["index"])] = float(row["relevance_score"])
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise ProviderError(f"malformed rerank response: {exc!r}") from exc
+        return scores

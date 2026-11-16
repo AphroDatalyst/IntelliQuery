@@ -50,6 +50,29 @@ class Settings(BaseSettings):
     vision_model: str | None = None
     vision_concurrency: int = Field(default=4, ge=1)
 
+    # Chat model that writes and verifies answers. Required for answering questions.
+    chat_base_url: str = "http://localhost:11434/v1"
+    chat_api_key: SecretStr | None = None
+    chat_model: str | None = None
+    # Attach figure and table images to the prompt; needs a vision-capable chat model.
+    chat_send_images: bool = False
+    answer_max_tokens: int = Field(default=900, ge=50)
+    # Check every cited sentence against its sources and drop unsupported ones.
+    answer_verify: bool = True
+    answer_history_turns: int = Field(default=6, ge=0)
+
+    # Optional cross-encoder reranker behind a Cohere/Jina-style `/rerank` endpoint.
+    rerank_base_url: str | None = None
+    rerank_api_key: SecretStr | None = None
+    rerank_model: str | None = None
+    # Candidates below this reranker score are discarded (0 disables the cut-off).
+    rerank_min_score: float = Field(default=0.0, ge=0)
+
+    # Candidates taken from each of dense and keyword search before fusion.
+    retrieval_candidates: int = Field(default=30, ge=1)
+    # Chunks handed to the answer model.
+    retrieval_top_k: int = Field(default=8, ge=1)
+
     model_timeout_seconds: float = Field(default=120.0, gt=0)
     model_max_retries: int = Field(default=3, ge=0)
 

@@ -64,6 +64,48 @@ bundled implementation speaks the OpenAI-compatible HTTP API, which covers hoste
 providers and local servers alike, with bounded retries and backoff on transient
 failures.
 
+## Answering
+
+```mermaid
+flowchart LR
+    Q[Question] --> RW[Rewrite follow-up<br/>as standalone]
+    RW --> D[Dense search]
+    RW --> K[Keyword search]
+    D --> F[Rank fusion]
+    K --> F
+    F --> RR[Rerank]
+    RR -->|nothing relevant| AB[Abstain]
+    RR --> G[Generate with<br/>inline citations]
+    G --> P[Drop uncited<br/>sentences]
+    P --> V[Verify each claim<br/>against its sources]
+    V -->|nothing survives| AB
+    V --> A[Answer + citations]
+```
+
+1. **Standalone question.** A follow-up such as "how is it delivered?" is rewritten
+   using the conversation so that search sees the full question.
+2. **Hybrid search.** Dense search (pgvector, cosine) finds passages by meaning; keyword
+   search (PostgreSQL full-text) finds exact terms, part numbers and names. Both run
+   inside the collection only. The keyword query matches any term rather than all of
+   them, because a natural question contains words its answer does not.
+3. **Fusion.** Reciprocal rank fusion merges the two rankings by position, which needs
+   no score calibration and favours passages both searches agree on.
+4. **Rerank (optional).** A cross-encoder rescoring step, with a cut-off below which
+   candidates are discarded.
+5. **Generate.** The model sees numbered sources and must end every sentence with the
+   sources that support it, or reply that the answer is not present. Source text is
+   presented as material to quote, not instructions to follow.
+6. **Enforce.** Citations that point outside the provided sources are ignored, and any
+   sentence left without a valid citation is deleted.
+7. **Verify.** A second pass checks each remaining sentence against the sources it
+   cites and removes those that are not supported. If the check itself fails, the
+   answer is returned flagged as unverified rather than silently trusted.
+8. **Abstain.** No retrieved passages, a refusal from the model, or no surviving
+   sentence all produce the same explicit "not in the documents" reply.
+
+Each answer is stored with its citations (chunk, marker, verification result), token
+usage and latency.
+
 ## Data model
 
 ```mermaid

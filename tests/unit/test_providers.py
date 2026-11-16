@@ -5,8 +5,10 @@ import httpx
 import pytest
 
 from intelliquery.config import EMBEDDING_DIMENSIONS
-from intelliquery.providers import ProviderError
+from intelliquery.providers import ChatMessage, ProviderError
 from intelliquery.providers.openai_compat import (
+    HttpReranker,
+    OpenAICompatChat,
     OpenAICompatClient,
     OpenAICompatEmbedder,
     OpenAICompatFigureDescriber,
@@ -138,3 +140,71 @@ async def test_describer_sends_the_image_and_context() -> None:
 async def test_describer_returns_none_for_decorative_or_empty(reply: str) -> None:
     describer = OpenAICompatFigureDescriber(make_client(chat_handler(reply)), "v")
     assert await describer.describe(b"x", caption="", section="") is None
+
+
+async def test_chat_sends_text_and_images_and_reads_usage() -> None:
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": " An answer [1]. "}}],
+                "usage": {"prompt_tokens": 120, "completion_tokens": 9},
+            },
+        )
+
+    chat = OpenAICompatChat(make_client(handler), "c")
+    result = await chat.complete(
+        [ChatMessage("system", "rules"), ChatMessage("user", "question", images=[b"\x89PNG"])],
+        max_tokens=50,
+        json_output=True,
+    )
+
+    assert (result.text, result.input_tokens, result.output_tokens) == ("An answer [1].", 120, 9)
+    assert (seen["temperature"], seen["max_tokens"]) == (0, 50)
+    assert seen["response_format"] == {"type": "json_object"}
+    assert seen["messages"][0] == {"role": "system", "content": "rules"}
+    text_part, image_part = seen["messages"][1]["content"]
+    assert text_part == {"type": "text", "text": "question"}
+    assert image_part["image_url"]["url"] == "data:image/png;base64,iVBORw=="
+
+
+async def test_chat_tolerates_missing_usage_and_rejects_malformed_bodies() -> None:
+    ok = make_client(
+        lambda r: httpx.Response(200, json={"choices": [{"message": {"content": "x"}}]})
+    )
+    result = await OpenAICompatChat(ok, "c").complete([ChatMessage("user", "q")], max_tokens=5)
+    assert (result.text, result.input_tokens) == ("x", None)
+
+    bad = make_client(lambda r: httpx.Response(200, json={"choices": []}))
+    with pytest.raises(ProviderError, match="malformed chat"):
+        await OpenAICompatChat(bad, "c").complete([ChatMessage("user", "q")], max_tokens=5)
+
+
+async def test_reranker_returns_scores_in_input_order() -> None:
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        seen["url"] = str(request.url)
+        # Services return results sorted by relevance, not by input position.
+        results = [
+            {"index": 2, "relevance_score": 0.9},
+            {"index": 0, "relevance_score": 0.4},
+        ]
+        return httpx.Response(200, json={"results": results})
+
+    scores = await HttpReranker(make_client(handler), "r").rerank("q", ["a", "b", "c"])
+
+    assert scores == [0.4, 0.0, 0.9]
+    assert seen["url"] == "http://models.test/v1/rerank"
+    assert (seen["query"], seen["documents"], seen["top_n"]) == ("q", ["a", "b", "c"], 3)
+
+
+async def test_reranker_skips_the_call_for_no_documents() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("should not be called")
+
+    assert await HttpReranker(make_client(handler), "r").rerank("q", []) == []

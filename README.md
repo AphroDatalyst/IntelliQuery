@@ -18,7 +18,7 @@ service. This table is kept current with what is actually in the repository.
 | Service foundation: API skeleton, config, structured logging, health probes | Done |
 | PostgreSQL + pgvector schema, migrations, CI, container image | Done |
 | Multimodal ingestion: layout-aware parsing, tables, figure descriptions, job queue, worker | Done |
-| Hybrid retrieval, reranking, cited and verified generation | Planned |
+| Hybrid retrieval, reranking, cited and verified answers, abstention | Done |
 | Chat API and web UI with citation viewer | Planned |
 | Evaluation gates and tracing | Planned |
 | Cloud deployment (Terraform) | Planned |
@@ -67,6 +67,19 @@ uv run intelliquery status
 To have figures described so they can be retrieved by what they show, set
 `INTELLIQUERY_VISION_MODEL` to a vision-capable model. Hosted providers work the same
 way: point the `*_BASE_URL` settings at them and set the API keys.
+
+### Ask questions
+
+Set `INTELLIQUERY_CHAT_MODEL` to the model that should write answers, then:
+
+```bash
+uv run intelliquery ask "What is the upper alarm limit?" --collection manuals
+```
+
+The answer comes back with numbered sources (file, page, section). Sentences the model
+could not tie to a source, or that a second verification pass found unsupported, are
+removed; if nothing is left, the reply says the documents do not contain the answer.
+Pass `--conversation <id>` to ask a follow-up.
 
 ## Development
 

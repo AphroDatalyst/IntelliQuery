@@ -1,8 +1,9 @@
-"""Command-line entry point: `intelliquery ingest`, `worker`, `status`."""
+"""Command-line entry point: `intelliquery ingest`, `worker`, `status`, `ask`."""
 
 import argparse
 import asyncio
 import sys
+import uuid
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -89,6 +90,56 @@ async def _status(factory: async_sessionmaker[AsyncSession]) -> int:
     return 0
 
 
+async def _ask(
+    factory: async_sessionmaker[AsyncSession], settings: Settings, args: argparse.Namespace
+) -> int:
+    from intelliquery.answering.conversations import load_history, record_turn
+    from intelliquery.answering.service import ChatModelNotConfigured, build_answer_service
+
+    try:
+        service, clients = build_answer_service(settings)
+    except ChatModelNotConfigured as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    try:
+        async with factory() as session, session.begin():
+            collection = await get_or_create_collection(session, args.collection)
+            history = (
+                await load_history(session, args.conversation, settings.answer_history_turns)
+                if args.conversation
+                else []
+            )
+            answer = await service.answer(session, collection.id, args.question, history)
+            message = await record_turn(
+                session,
+                user_id=collection.owner_id,
+                collection_id=collection.id,
+                question=args.question,
+                answer=answer,
+                conversation_id=args.conversation,
+            )
+            conversation_id = message.conversation_id
+    finally:
+        for model_client in clients:
+            await model_client.aclose()
+
+    print(answer.text)
+    if answer.citations:
+        print("\nSources:")
+        for citation in answer.citations:
+            chunk = citation.chunk
+            page = f", page {chunk.page_number}" if chunk.page_number is not None else ""
+            section = f" - {chunk.section_path}" if chunk.section_path else ""
+            print(f"  [{citation.marker}] {chunk.filename}{page} ({chunk.modality.value}){section}")
+    status = "abstained" if answer.abstained else ("verified" if answer.verified else "unverified")
+    print(
+        f"\n{status} | {answer.latency_ms} ms | dropped: {answer.dropped_sentences}"
+        f" | conversation: {conversation_id}",
+        file=sys.stderr,
+    )
+    return 0
+
+
 async def _run(args: argparse.Namespace) -> int:
     settings = get_settings()
     configure_logging(settings.log_level, json_output=settings.log_json)
@@ -99,6 +150,8 @@ async def _run(args: argparse.Namespace) -> int:
             return await _ingest(factory, settings, args)
         if args.command == "status":
             return await _status(factory)
+        if args.command == "ask":
+            return await _ask(factory, settings, args)
         from intelliquery.worker import run_worker
 
         await run_worker(factory, settings, drain=args.drain)
@@ -117,6 +170,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     worker = commands.add_parser("worker", help="process queued ingestion jobs")
     worker.add_argument("--drain", action="store_true", help="exit when the queue is empty")
+
+    ask = commands.add_parser("ask", help="answer a question from a collection, with citations")
+    ask.add_argument("question")
+    ask.add_argument("--collection", default="default")
+    ask.add_argument("--conversation", type=uuid.UUID, help="continue an earlier conversation")
 
     commands.add_parser("status", help="list documents and their ingestion state")
 
