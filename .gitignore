@@ -28,7 +28,7 @@ legacy/
 
 # Node / frontend
 node_modules/
-.next/
+web/dist/
 
 # Editors and OS
 .idea/

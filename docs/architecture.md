@@ -14,9 +14,9 @@ flowchart LR
     W --> M
 ```
 
-Implemented today: the API service, the PostgreSQL schema and the ingestion worker.
-The other components are listed in the README status table and arrive in later
-milestones.
+All of these are implemented. Object storage is a local directory (a volume shared by
+the API and the worker) behind a small interface. What is still planned is listed in the
+README status table.
 
 ## Ingestion
 
@@ -105,6 +105,38 @@ flowchart LR
 
 Each answer is stored with its citations (chunk, marker, verification result), token
 usage and latency.
+
+## HTTP API and web UI
+
+The API (`/api`, JSON) is the only way in; the web UI is a static React app that the
+API serves and that calls nothing else.
+
+- **One transaction per request.** A request's reads and writes commit together when
+  the handler returns and before the response is sent, so a client that reads straight
+  after a write always sees it. An answer and its citations are stored atomically; a
+  failed model call stores nothing.
+- **Ownership is part of every lookup.** Collections, documents, conversations and
+  images are fetched through queries scoped to the acting user, and something that
+  belongs to someone else is reported as not found. Until accounts exist the acting
+  user is a single built-in one, resolved in one place (`identity.py`).
+- **Uploads** are read with a size cap, checked by content, and deduplicated by hash:
+  sending the same file again returns the existing document.
+- **Deletion** removes database rows in the request's transaction and the stored files
+  after it commits, so a failed delete loses nothing.
+- **Failures are explicit.** No chat model configured is `503` with the setting to
+  change; a failing model endpoint is `502` without leaking upstream details.
+
+### Citation viewer
+
+A citation in an API response carries what is needed to show the evidence: the chunk's
+text, the page (or pages) it sits on, its bounding box in page-image pixels, and the
+size of the rendered page. The UI draws the box over the page image as percentages of
+the page, so it stays aligned at any zoom. A passage that continues onto a second page
+has one region per page. Figures and tables without a page render fall back to their
+cropped image.
+
+Citation numbers in an answer become links only when they match a citation the server
+returned; any other bracketed number in the text is left alone.
 
 ## Data model
 

@@ -34,6 +34,8 @@ class Settings(BaseSettings):
 
     # Object storage for source files, page renders and figure crops.
     storage_dir: Path = Path("data/storage")
+    # Directory holding the built web UI (`web/dist`); the API serves it when set.
+    web_dir: Path | None = None
 
     # Model endpoints speak the OpenAI-compatible HTTP API, which covers hosted
     # providers as well as local servers such as Ollama. Defaults target local Ollama.

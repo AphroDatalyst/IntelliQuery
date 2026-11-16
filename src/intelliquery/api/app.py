@@ -7,12 +7,14 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
+from fastapi.staticfiles import StaticFiles
 
 from intelliquery import __version__
-from intelliquery.api.routes import health
+from intelliquery.api.routes import collections, conversations, health
 from intelliquery.config import Settings, get_settings
 from intelliquery.db.session import create_engine, create_session_factory
 from intelliquery.logging import configure_logging, request_id_var
+from intelliquery.storage import LocalStorage
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            for model_client in app.state.model_clients:
+                await model_client.aclose()
             await engine.dispose()
 
     app = FastAPI(
@@ -43,6 +47,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url=None,
     )
     app.state.settings = settings
+    app.state.storage = LocalStorage(settings.storage_dir)
+    # Built on the first question, so the API can start without a chat model.
+    app.state.answer_service = None
+    app.state.model_clients = []
 
     @app.middleware("http")
     async def request_context(
@@ -69,4 +77,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return response
 
     app.include_router(health.router)
+    app.include_router(collections.router)
+    app.include_router(conversations.router)
+
+    # The built web UI, when present. Mounted last so API routes take precedence.
+    if settings.web_dir and (settings.web_dir / "index.html").is_file():
+        app.mount("/", StaticFiles(directory=settings.web_dir, html=True), name="web")
     return app

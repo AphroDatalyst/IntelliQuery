@@ -69,10 +69,28 @@ jobs:
           name: coverage
           path: coverage.xml
 
+  web:
+    name: Web UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
   image:
     name: Build ${{ matrix.image }} image
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [lint, test, web]
     permissions:
       contents: read
       packages: write

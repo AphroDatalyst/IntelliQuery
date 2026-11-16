@@ -1,5 +1,6 @@
 import json
 import logging
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -45,6 +46,23 @@ def test_docs_are_disabled_in_production() -> None:
     settings = Settings(environment="production", database_url=UNREACHABLE_DB)
     with TestClient(create_app(settings)) as client:
         assert client.get("/docs").status_code == 404
+
+
+def test_built_web_ui_is_served_without_shadowing_the_api(tmp_path: Path) -> None:
+    (tmp_path / "index.html").write_text("<title>IntelliQuery</title>", encoding="utf-8")
+    settings = Settings(environment="test", database_url=UNREACHABLE_DB, web_dir=tmp_path)
+    with TestClient(create_app(settings)) as client:
+        assert "IntelliQuery" in client.get("/").text
+        assert client.get("/healthz").json()["status"] == "ok"
+        assert client.get("/api/info").json()["max_upload_mb"] == settings.ingest_max_upload_mb
+        assert client.get("/api/nothing-here").status_code == 404
+
+
+def test_api_starts_without_a_built_web_ui(tmp_path: Path) -> None:
+    settings = Settings(environment="test", database_url=UNREACHABLE_DB, web_dir=tmp_path)
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/").status_code == 404
+        assert client.get("/healthz").status_code == 200
 
 
 def test_json_formatter_includes_request_id_and_extras() -> None:

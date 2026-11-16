@@ -13,21 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from intelliquery.config import Settings, get_settings
 from intelliquery.db import models
 from intelliquery.db.session import create_engine, create_session_factory
+from intelliquery.identity import get_local_user
 from intelliquery.ingestion.service import UploadRejected, register_document
 from intelliquery.logging import configure_logging
 from intelliquery.storage import LocalStorage
 
-# Until accounts exist, command-line ingestion is owned by one local user.
-LOCAL_USER_EMAIL = "local@intelliquery.invalid"
-
 
 async def get_or_create_collection(session: AsyncSession, name: str) -> models.Collection:
-    user = await session.scalar(select(models.User).where(models.User.email == LOCAL_USER_EMAIL))
-    if user is None:
-        # "!" is not a valid password hash, so this account can never be logged in to.
-        user = models.User(email=LOCAL_USER_EMAIL, hashed_password="!")  # noqa: S106
-        session.add(user)
-        await session.flush()
+    user = await get_local_user(session)
     collection = await session.scalar(
         select(models.Collection).where(
             models.Collection.owner_id == user.id, models.Collection.name == name

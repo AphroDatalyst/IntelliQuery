@@ -19,7 +19,8 @@ service. This table is kept current with what is actually in the repository.
 | PostgreSQL + pgvector schema, migrations, CI, container image | Done |
 | Multimodal ingestion: layout-aware parsing, tables, figure descriptions, job queue, worker | Done |
 | Hybrid retrieval, reranking, cited and verified answers, abstention | Done |
-| Chat API and web UI with citation viewer | Planned |
+| HTTP API and web UI with citation viewer | Done |
+| Accounts and sign-in (the service currently acts as one built-in user) | Planned |
 | Evaluation gates and tracing | Planned |
 | Cloud deployment (Terraform) | Planned |
 
@@ -47,8 +48,24 @@ docker compose up --build -d
 curl http://localhost:8000/readyz
 ```
 
-This starts PostgreSQL with pgvector, applies migrations, serves the API on port 8000
-and runs an ingestion worker. Interactive API docs are at `http://localhost:8000/docs`.
+This starts PostgreSQL with pgvector, applies migrations, serves the API and the web UI
+on port 8000 and runs an ingestion worker. Open `http://localhost:8000` for the UI;
+interactive API docs are at `http://localhost:8000/docs`.
+
+There is no sign-in yet: every request acts as one built-in user, so keep the service
+on a trusted network. Compose publishes it on `127.0.0.1` only.
+
+### Use the web UI
+
+1. Create a collection and upload PDF files (button or drag and drop). Each document
+   shows its ingestion state and becomes searchable when it turns ready.
+2. Ask a question. This needs `INTELLIQUERY_CHAT_MODEL` set in `.env`; without it the
+   UI still manages documents and says what is missing.
+3. Click a citation number in the answer to open the source: the page is shown with
+   the cited region outlined, next to the passage that was quoted.
+
+Each answer is labelled *Verified*, *Unverified* (the verification pass did not
+complete) or *Not in the documents*, and can be rated.
 
 ### Ingest documents
 
@@ -81,6 +98,28 @@ could not tie to a source, or that a second verification pass found unsupported,
 removed; if nothing is left, the reply says the documents do not contain the answer.
 Pass `--conversation <id>` to ask a follow-up.
 
+### HTTP API
+
+Everything the UI does goes through the JSON API under `/api`:
+
+| Request | Purpose |
+|---|---|
+| `GET /api/info` | Version and configured models |
+| `GET`, `POST /api/collections` · `DELETE /api/collections/{id}` | Manage collections |
+| `GET`, `POST /api/collections/{id}/documents` | List documents; upload a PDF (multipart field `file`) |
+| `GET`, `DELETE /api/documents/{id}` | Ingestion state; delete a document and everything derived from it |
+| `POST /api/collections/{id}/ask` | Ask a question; pass `conversation_id` for a follow-up |
+| `GET /api/collections/{id}/conversations` | Conversations in a collection |
+| `GET`, `DELETE /api/conversations/{id}` | A conversation with its answers and citations |
+| `PUT`, `DELETE /api/messages/{id}/feedback` | Rate an answer |
+| `GET /api/documents/{id}/pages/{n}/image` · `GET /api/chunks/{id}/image` | Page render and figure/table crop for the citation viewer |
+
+```bash
+curl -X POST http://localhost:8000/api/collections/$COLLECTION/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "What is the upper alarm limit?"}'
+```
+
 ## Development
 
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
@@ -92,9 +131,23 @@ uv run alembic upgrade head      # apply migrations
 uv run uvicorn intelliquery.api.app:create_app --factory --reload
 ```
 
+The web UI is a React + TypeScript app in [web/](web) (requires Node.js 22+). During
+development it runs on its own server with hot reload and forwards `/api` to the API on
+port 8000:
+
+```bash
+cd web
+npm ci
+npm run dev
+```
+
+`make web` builds it into `web/dist`; set `INTELLIQUERY_WEB_DIR=web/dist` to have a
+locally run API serve that build, as the container image does.
+
 | Task | Command |
 |---|---|
 | Lint and type-check | `make lint` |
+| Web UI: type-check, test, build | `make web` |
 | Unit tests | `uv run pytest` |
 | Unit + integration tests | set `INTELLIQUERY_DATABASE_URL`, then `uv run pytest` |
 | New migration | `make revision m="describe change"` |
@@ -106,8 +159,8 @@ Configuration is read from environment variables prefixed `INTELLIQUERY_`;
 
 Every push and pull request runs formatting, lint and strict type checks; applies the
 migrations to a real PostgreSQL + pgvector, verifies that models and migrations agree
-and that migrations reverse cleanly; runs the test suite; and builds the container
-image. Pushes to `main` and version tags publish the image to GitHub Container Registry.
+and that migrations reverse cleanly; runs the test suite; type-checks, tests and builds the
+web UI; and builds the container images. Pushes to `main` and version tags publish the image to GitHub Container Registry.
 
 ## License
 

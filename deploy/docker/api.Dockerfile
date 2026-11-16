@@ -1,5 +1,14 @@
 # syntax=docker/dockerfile:1.7
 
+# The web UI is compiled to static files and served by the API.
+FROM node:24-slim AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
+COPY web ./
+RUN npm run build
+
+
 FROM python:3.15-slim AS builder
 COPY --from=ghcr.io/astral-sh/uv:0.13 /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 \
@@ -23,14 +32,20 @@ FROM python:3.15-slim AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH" \
-    INTELLIQUERY_LOG_JSON=true
+    INTELLIQUERY_LOG_JSON=true \
+    INTELLIQUERY_WEB_DIR=/app/web \
+    INTELLIQUERY_STORAGE_DIR=/var/lib/intelliquery/storage
 
+# Same uid as the worker image, so both can use one storage volume.
 RUN groupadd --system --gid 10001 app \
-    && useradd --system --uid 10001 --gid app --no-create-home app
+    && useradd --system --uid 10001 --gid app --no-create-home app \
+    && mkdir -p /var/lib/intelliquery/storage \
+    && chown -R app:app /var/lib/intelliquery
 WORKDIR /app
 COPY --from=builder --chown=app:app /app/.venv ./.venv
 COPY --from=builder --chown=app:app /app/alembic.ini ./alembic.ini
 COPY --from=builder --chown=app:app /app/migrations ./migrations
+COPY --from=web --chown=app:app /web/dist ./web
 USER app
 
 EXPOSE 8000
